@@ -1,0 +1,101 @@
+cv::CascadeClassifier fullbody_cascade;
+
+// arguments for body detection quality/speed
+float scaleFactor = 1.05;
+float minNeighbors = 1;
+
+- (std::vector<cv::Rect>)findBodies:(Mat)frame {
+    cv::Mat frame_gray;
+    cvtColor( frame, frame_gray, cv::COLOR_RGB2GRAY);
+    equalizeHist( frame_gray, frame_gray );
+    
+    std::vector<cv::Rect> bodies;
+    
+    NSString *fullbody_cascade_name = [[NSBundle mainBundle] pathForResource:@"haarcascade_fullbody" ofType:@"xml"];
+    if(!cascade_loaded){
+        if( !fullbody_cascade.load( std::string([fullbody_cascade_name UTF8String]) ) ){ printf("--(!)Error loading\n"); return bodies;};
+        cascade_loaded = true;
+    }
+    
+    fullbody_cascade.detectMultiScale( frame_gray, bodies, scaleFactor, minNeighbors, 0|cv::CASCADE_SCALE_IMAGE, cv::Size(cvRound(frame.cols * 0.20), cvRound(frame.rows * 0.5)));
+    return bodies;
+}
+cv::Mat backgroundImage;
+
+- (void)setBackgroundMask:(UIImage *)background {
+    cv::Mat inputImage = [self cvMatFromUIImage:background];
+    backgroundImage = [self preProcessImage:inputImage];
+    _background = background;
+}
+
+- (UIImage *)removeBackground:(UIImage *)source {
+    if (_background == nil) {
+        return nil;
+    }
+    
+    cv::Mat input = [self cvMatFromUIImage:source];
+    
+    Mat processedImage = [self preProcessImage:input];
+    
+    cv::Mat subImage;
+    cv::absdiff(processedImage, backgroundImage, subImage);
+    
+    cv::Mat grayImage;
+    cv::cvtColor(subImage, grayImage, COLOR_BGR2GRAY);
+    
+    cv::Mat denoisedGrayImage;
+    cv::blur(grayImage, denoisedGrayImage, cv::Size(4, 4));
+    
+    cv::Mat thresholdImage;
+    cv::threshold(denoisedGrayImage, thresholdImage, 10, 255, 0);
+    
+    cv::Mat foregroundImage;
+    processedImage.copyTo(foregroundImage, thresholdImage);
+    
+    cv::Mat colorFixedImage;
+    cv::cvtColor(foregroundImage, colorFixedImage, COLOR_BGR2RGBA);
+    
+    UIImage *foreground = [self UIImageFromCVMat:colorFixedImage];
+    
+    return foreground;
+}
+float detectScaleFactor = 1.05;
+cv::Size padding = cv::Size(16, 16);
+cv::Size winStride = cv::Size(8, 8);
+
+HOGDescriptor hog;
+
+- (void)setupHOG {
+    hog.setSVMDetector(HOGDescriptor::getDefaultPeopleDetector());
+}
+
+- (NSArray *)hogDetect:(UIImage *)source {
+    
+    cv::Mat input = [self cvMatFromUIImage:source];
+
+    cv::Mat colorConvertedImage;
+    cv::cvtColor(input, colorConvertedImage, COLOR_BGR2RGB);
+    
+    std::vector<cv::Rect> found;
+    std::vector<double> weights;
+    
+    hog.detectMultiScale(colorConvertedImage, found, 0, winStride, padding, detectScaleFactor, 2);
+
+    float threshold = 0.5;
+    
+    std::vector<cv::Rect> reducedRectangles;
+
+    nms(found, reducedRectangles, threshold);
+
+    NSMutableArray *result = @[].mutableCopy;
+    for( size_t i = 0; i < reducedRectangles.size(); i++ )
+    {
+        [result addObject:[NSValue valueWithCGRect:CGRectMake(reducedRectangles[i].x, reducedRectangles[i].y, reducedRectangles[i].width, reducedRectangles[i].height)]];
+    }
+    
+    found.clear();
+    weights.clear();
+    reducedRectangles.clear();
+    
+    return result;
+}
